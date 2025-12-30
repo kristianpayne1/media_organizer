@@ -1,6 +1,9 @@
 use anyhow::Result;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Local, NaiveDateTime, TimeZone};
 use exif::{In, Reader, Tag, Value};
+use serde_json::Value as JsonValue;
+use std::process::Command;
+use std::time::SystemTime;
 use std::{fs::File, io::BufReader, path::Path};
 use walkdir::WalkDir;
 
@@ -10,6 +13,53 @@ enum Kind {
     Video,
     Dvd,
     Ignore,
+}
+
+fn is_avi(path: &Path) -> bool {
+    matches!(normalize_extension(path).as_deref(), Some("avi"))
+}
+
+fn file_mtime(path: &Path) -> Option<NaiveDateTime> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified: SystemTime = meta.modified().ok()?;
+    let dt: DateTime<Local> = modified.into();
+    Some(dt.naive_local())
+}
+
+fn ffprobe_creation_time(path: &Path) -> Result<Option<NaiveDateTime>> {
+    let output = Command::new("ffprobe")
+        .args(["-v", "quiet", "-print_format", "josn", "-show_format"])
+        .arg(path)
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let json: JsonValue = serde_json::from_slice(&output.stdout)?;
+    let creation = json
+        .get("format")
+        .and_then(|f| f.get("tags"))
+        .and_then(|t| t.get("creation_time"))
+        .and_then(|v| v.as_str());
+
+    if let Some(dt) = creation.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+        return Ok(Some(dt.naive_local()));
+    }
+
+    Ok(None)
+}
+
+fn video_best_datetime(path: &Path) -> Result<Option<NaiveDateTime>> {
+    if let Some(dt) = (!is_avi(path))
+        .then(|| ffprobe_creation_time(path))
+        .transpose()?
+        .flatten()
+    {
+        return Ok(Some(dt));
+    }
+
+    Ok(file_mtime(path))
 }
 
 fn normalize_extension(path: &Path) -> Option<String> {
@@ -111,7 +161,25 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            Kind::Video => videos += 1,
+            Kind::Video => {
+                videos += 1;
+
+                match video_best_datetime(path) {
+                    Ok(Some(dt)) => {
+                        println!(
+                            "(video) {}    {}",
+                            dt.format("%Y-%m-%d %H:%M:%S"),
+                            path.display()
+                        );
+                    }
+                    Ok(None) => {
+                        println!("(video) (no date)     {}", path.display());
+                    }
+                    Err(err) => {
+                        println!("(video) (error)   {}  [ {err} ]", path.display());
+                    }
+                }
+            }
             Kind::Dvd => dvds += 1,
             Kind::Ignore => ignored += 1,
         }
