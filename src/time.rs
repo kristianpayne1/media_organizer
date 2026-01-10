@@ -1,14 +1,14 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDateTime};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{path::Path, time::SystemTime};
 
 use crate::{
     classify::{Kind, classify, is_jpeg},
-    photo_exif, video_meta,
+    photo, video,
 };
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DateSource {
     Exif,
     Ffprobe,
@@ -31,7 +31,7 @@ pub fn best_datetime_for_file(path: &Path) -> Result<(Option<NaiveDateTime>, Dat
     match classify(path) {
         Kind::Photo => {
             if is_jpeg(path) {
-                if let Some(dt) = photo_exif::exif_capture_datetime(path)? {
+                if let Some(dt) = photo::exif_capture_datetime(path)? {
                     return Ok((Some(dt), DateSource::Exif));
                 }
             }
@@ -41,7 +41,7 @@ pub fn best_datetime_for_file(path: &Path) -> Result<(Option<NaiveDateTime>, Dat
             Ok((None, DateSource::None))
         }
         Kind::Video => {
-            if let Some(dt) = video_meta::ffprobe_creation_time(path)? {
+            if let Some(dt) = video::ffprobe_creation_time(path)? {
                 return Ok((Some(dt), DateSource::Ffprobe));
             }
             if let Some(dt) = file_mtime(path) {

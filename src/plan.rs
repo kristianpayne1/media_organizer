@@ -3,26 +3,26 @@ use crate::time::{DateSource, best_datetime_for_dvd, best_datetime_for_file, for
 use crate::{deduplicate, dvd};
 use anyhow::Result;
 use chrono::NaiveDateTime;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Action {
     Copy,
     ConvertVideo,
     ConvertDvd,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MediaKind {
     Photo,
     Video,
     Dvd,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PlannedItem {
     pub kind: MediaKind,
     pub action: Action,

@@ -1,7 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use serde_json::Value as JsonValue;
 use std::{path::Path, process::Command};
+
+use crate::apply::ensure_parent_dir;
 
 pub fn ffprobe_creation_time(path: &Path) -> Result<Option<NaiveDateTime>> {
     let output = Command::new("ffprobe")
@@ -25,4 +27,35 @@ pub fn ffprobe_creation_time(path: &Path) -> Result<Option<NaiveDateTime>> {
         .map(|dt| dt.naive_local());
 
     Ok(dt)
+}
+
+pub fn ffmpeg_convert_to_mp4(src: &Path, dst: &Path) -> Result<()> {
+    ensure_parent_dir(dst)?;
+
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            src.to_str().unwrap(),
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            dst.to_str().unwrap(),
+        ])
+        .status()
+        .with_context(|| "failed to spawn ffmpeg")?;
+
+    anyhow::ensure!(
+        status.success(),
+        "ffmpeg failed converting {}",
+        src.display()
+    );
+
+    Ok(())
 }
