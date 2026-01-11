@@ -278,7 +278,7 @@ pub fn build_plan(root: &Path, out_root: &Path) -> Result<(Vec<PlannedItem>, Pla
             summary.missing_date += 1;
         }
 
-        let _vobs = dvd::dvd_main_title_vobs(&dvd_root)?;
+        let _vobs = dvd::dvd_all_content_vobs(&dvd_root)?;
 
         let dst = plan_dst(out_root, MediaKind::Dvd, &dvd_root, dt);
         planned.push(PlannedItem {

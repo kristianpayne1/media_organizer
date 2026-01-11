@@ -1,4 +1,4 @@
-use crate::dvd::ffmpeg_convert_dvd_to_mp4;
+use crate::dvd::convert_dvd_vobs_to_single_mp4;
 use crate::plan::{Action, PlannedItem};
 use crate::video::ffmpeg_convert_to_mp4;
 use anyhow::{Context, Result};
@@ -78,7 +78,7 @@ pub fn apply_items(items: &[PlannedItem]) -> Result<ApplySummary> {
         let result = match item.action {
             Action::Copy => copy_file(&src, &dst),
             Action::ConvertVideo => ffmpeg_convert_to_mp4(&src, &dst),
-            Action::ConvertDvd => ffmpeg_convert_dvd_to_mp4(&src, &dst),
+            Action::ConvertDvd => convert_dvd_vobs_to_single_mp4(&src, &dst),
         };
 
         match result {

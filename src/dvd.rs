@@ -1,19 +1,15 @@
-use anyhow::{Context, Ok, Result, ensure};
-use std::collections::HashMap;
-use std::env::temp_dir;
-use std::fs::File;
-use std::io::Write;
+use anyhow::{Ok, Result, ensure};
 use std::path::{Path, PathBuf};
-use std::process;
 
-use crate::apply::ensure_parent_dir;
+fn write_ffconcat_file(paths: &[PathBuf]) -> anyhow::Result<PathBuf> {
+    use std::io::Write;
 
-fn write_concat_file(vobs: &[PathBuf]) -> Result<PathBuf> {
-    let list_path = temp_dir().join(format!("dvd_concat_{}.txt", process::id()));
-    let mut f = File::create(&list_path)?;
+    let list_path = std::env::temp_dir().join(format!("concat_{}.ffconcat", std::process::id()));
+    let mut f = std::fs::File::create(&list_path)?;
 
-    for v in vobs {
-        writeln!(f, "file '{}'", v.display())?;
+    for p in paths {
+        let escaped = p.to_string_lossy().replace('\'', "'\\''");
+        writeln!(f, "file '{}'", escaped)?;
     }
 
     Ok(list_path)
@@ -36,13 +32,13 @@ pub fn dvd_root_from_video_ts_dir(path: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn dvd_main_title_vobs(dvd_root: &Path) -> Result<Vec<PathBuf>> {
+pub fn dvd_all_content_vobs(dvd_root: &Path) -> Result<Vec<PathBuf>> {
     let video_ts = dvd_root.join("VIDEO_TS");
     if !video_ts.is_dir() {
         return Ok(vec![]);
     }
 
-    let mut groups: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut vobs: Vec<PathBuf> = Vec::new();
 
     for entry in std::fs::read_dir(&video_ts)? {
         let entry = entry?;
@@ -58,80 +54,109 @@ pub fn dvd_main_title_vobs(dvd_root: &Path) -> Result<Vec<PathBuf>> {
             continue;
         }
 
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_ascii_uppercase();
 
-        if !name.to_ascii_uppercase().starts_with("VTS_")
-            || name.len() < 10
-            || name.get(7..9) == Some("_0")
-        {
+        if name == "VIDEO_TS.VOB" {
             continue;
         }
 
-        let key = name.get(0..6).unwrap().to_string();
-        groups.entry(key).or_default().push(path);
-    }
-
-    let mut best: Vec<PathBuf> = vec![];
-    let mut best_size = 0u64;
-
-    for (_, mut files) in groups {
-        files.sort();
-
-        let size: u64 = files
-            .iter()
-            .map(|p| p.metadata().map(|m| m.len()).unwrap_or(0))
-            .sum();
-
-        if size > best_size {
-            best_size = size;
-            best = files;
+        if name.starts_with("VTS_") && name.get(7..9) == Some("_0") {
+            continue;
         }
+
+        vobs.push(path);
     }
 
-    Ok(best)
+    vobs.sort();
+    Ok(vobs)
 }
 
-pub fn ffmpeg_convert_dvd_to_mp4(dvd_root: &Path, dst: &Path) -> Result<()> {
-    ensure_parent_dir(dst)?;
+pub fn convert_dvd_vobs_to_single_mp4(dvd_root: &Path, dst_mp4: &Path) -> Result<()> {
+    let vobs = dvd_all_content_vobs(dvd_root)?;
+    ensure!(!vobs.is_empty(), "no VOBs found for {}", dvd_root.display());
 
-    let vobs = dvd_main_title_vobs(dvd_root)
-        .with_context(|| format!("finding VOBs for DVD {}", dvd_root.display()))?;
+    // temp dir
+    let work_dir = std::env::temp_dir().join(format!("dvd_parts_{}", std::process::id()));
+    std::fs::create_dir_all(&work_dir)?;
 
-    ensure!(
-        !vobs.is_empty(),
-        "no VOBs found for DVD {}",
-        dvd_root.display()
-    );
+    let mut ts_parts: Vec<PathBuf> = Vec::new();
 
-    let list_path = write_concat_file(&vobs)?;
+    for (i, vob) in vobs.iter().enumerate() {
+        let ts_path = work_dir.join(format!("part-{:03}.ts", i + 1));
+        ts_parts.push(ts_path.clone());
 
-    let status = process::Command::new("ffmpeg")
+        if ts_path.exists() {
+            continue;
+        }
+
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-nostats",
+                "-loglevel",
+                "warning",
+                "-fflags",
+                "+genpts+igndts+discardcorrupt",
+                "-err_detect",
+                "ignore_err",
+                "-i",
+                vob.to_str().unwrap(),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-f",
+                "mpegts",
+                ts_path.to_str().unwrap(),
+            ])
+            .status()?;
+
+        ensure!(status.success(), "ffmpeg failed on VOB {}", vob.display());
+    }
+
+    if let Some(parent) = dst_mp4.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let list_path = write_ffconcat_file(&ts_parts)?;
+
+    let status = std::process::Command::new("ffmpeg")
         .args([
             "-y",
             "-hide_banner",
+            "-nostats",
             "-loglevel",
-            "error",
+            "warning",
             "-f",
             "concat",
             "-safe",
             "0",
             "-i",
             list_path.to_str().unwrap(),
-            "-c:v",
-            "libx264",
-            "-c:a",
-            "aac",
+            "-c",
+            "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
             "-movflags",
             "+faststart",
-            dst.to_str().unwrap(),
+            dst_mp4.to_str().unwrap(),
         ])
-        .status()
-        .with_context(|| "failed to spawn ffmpeg for DVD")?;
+        .status()?;
 
-    anyhow::ensure!(
+    ensure!(
         status.success(),
-        "ffmpeg failed converting DVD {}",
+        "ffmpeg concat failed for DVD {}",
         dvd_root.display()
     );
+
     Ok(())
 }
