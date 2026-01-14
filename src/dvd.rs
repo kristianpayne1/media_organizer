@@ -76,6 +76,10 @@ pub fn dvd_all_content_vobs(dvd_root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 pub fn convert_dvd_vobs_to_single_mp4(dvd_root: &Path, dst_mp4: &Path) -> Result<()> {
+    if dst_mp4.exists() {
+        return Ok(());
+    }
+
     let vobs = dvd_all_content_vobs(dvd_root)?;
     ensure!(!vobs.is_empty(), "no VOBs found for {}", dvd_root.display());
 
@@ -157,6 +161,10 @@ pub fn convert_dvd_vobs_to_single_mp4(dvd_root: &Path, dst_mp4: &Path) -> Result
         "ffmpeg concat failed for DVD {}",
         dvd_root.display()
     );
+
+    if status.success() {
+        std::fs::remove_dir_all(&work_dir).ok();
+    }
 
     Ok(())
 }
